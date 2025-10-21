@@ -6,10 +6,8 @@ from mpl_toolkits.mplot3d import Axes3D
 from matplotlib.animation import FuncAnimation, FFMpegFileWriter
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 import mpl_toolkits.mplot3d.axes3d as p3
-# import cv2
 from textwrap import wrap
 from moviepy.editor import VideoClip
-from moviepy.video.io.bindings import mplfig_to_npimage
 
 def list_cut_average(ll, intervals):
     if intervals == 1:
@@ -40,8 +38,8 @@ def plot_3d_motion(save_path, kinematic_tree, joints, title, dataset, figsize=(3
         ax.set_xlim3d([-radius / 2, radius / 2])
         ax.set_ylim3d([0, radius])
         ax.set_zlim3d([-radius / 3., radius * 2 / 3.])
-        # print(title)
-        # fig.suptitle(title, fontsize=10)  # Using dynamic title instead
+
+        ax.set_aspect('equal')
         ax.grid(b=False)
 
     def plot_xzPlane(minx, maxx, miny, minz, maxz):
@@ -56,10 +54,9 @@ def plot_3d_motion(save_path, kinematic_tree, joints, title, dataset, figsize=(3
         xz_plane.set_facecolor((0.5, 0.5, 0.5, 0.5))
         ax.add_collection3d(xz_plane)
 
-    #         return ax
-
     # (seq_len, joints_num, 3)
     data = joints.copy().reshape(len(joints), -1, 3)
+    n_frames = data.shape[0]
 
     # preparation related to specific datasets
     if dataset == 'kit':
@@ -71,7 +68,11 @@ def plot_3d_motion(save_path, kinematic_tree, joints, title, dataset, figsize=(3
 
     fig = plt.figure(figsize=figsize)
     plt.tight_layout()
-    ax = p3.Axes3D(fig)
+    
+    # JA: Use modern 'add_subplot' instead of Axes3D
+    # ax = p3.Axes3D(fig) # Deprecated and replaced by JA
+    ax = fig.add_subplot(projection='3d')
+    
     init()
     MINS = data.min(axis=0).min(axis=0)
     MAXS = data.max(axis=0).max(axis=0)
@@ -84,9 +85,6 @@ def plot_3d_motion(save_path, kinematic_tree, joints, title, dataset, figsize=(3
     elif vis_mode == 'gt':
         colors = colors_blue
     
-    n_frames = data.shape[0]
-    #     print(dataset.shape)
-
     height_offset = MINS[1]
     data[:, :, 1] -= height_offset
     trajec = data[:, 0, [0, 2]]  # memorize original x,z pelvis values
@@ -95,12 +93,21 @@ def plot_3d_motion(save_path, kinematic_tree, joints, title, dataset, figsize=(3
     data[..., 0] -= data[:, 0:1, 0] 
     data[..., 2] -= data[:, 0:1, 2]
 
-    #     print(trajec.shape)
+    # --- EDIT 3: This function replaces 'mplfig_to_npimage' ---
+    def render_fig_to_array(fig):
+        """Renders a matplotlib figure to a NumPy array."""
+        fig.canvas.draw()
+        buf = fig.canvas.buffer_rgba()
+        arr = np.frombuffer(buf, dtype=np.uint8)
+        arr = arr.reshape(fig.canvas.get_width_height()[::-1] + (4,))
+        return arr[:, :, :3]  # Return RGB, ignore Alpha channel
 
-    def update(index):
-        # sometimes index is equal to n_frames/fps due to floating point issues. in such case, we duplicate the last frame
-        index = min(n_frames-1, int(index*fps))
+    def update(time_in_seconds):
+        # moviepy.VideoClip passes time, not frame index. Convert it.
+        index = min(n_frames - 1, int(time_in_seconds * fps))
+        
         ax.clear()
+        init()
         ax.view_init(elev=120, azim=-90)
         ax.dist = 7.5
         
@@ -123,26 +130,20 @@ def plot_3d_motion(save_path, kinematic_tree, joints, title, dataset, figsize=(3
                 linewidth = 2.0
             ax.plot3D(data[index, chain, 0], data[index, chain, 1], data[index, chain, 2], linewidth=linewidth,
                       color=color)
-        #         print(trajec[:index, 0].shape)
 
         plt.axis('off')
         ax.set_axis_off()
         ax.set_xticklabels([])
         ax.set_yticklabels([])
         ax.set_zticklabels([])
-
-        # Hide grid lines
         ax.grid(False)
-
-        # Hide axes ticks
         ax.set_xticks([])
         ax.set_yticks([])
         ax.set_zticks([])
 
+        return render_fig_to_array(fig)
 
-        return mplfig_to_npimage(fig)
-
-    ani = VideoClip(update)
+    ani = VideoClip(update, duration=n_frames / fps)
     
-    plt.close()
+    plt.close(fig) # Close the figure to save memory
     return ani
